@@ -1,0 +1,64 @@
+name: Falix Multi-Account Keepalive
+
+on:
+  schedule:
+    # UTC 00:00 和 12:00 = 北京时间 08:00 和 20:00
+    - cron: "0 0,12 * * *"
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install sing-box
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_JSON=$(curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/SagerNet/sing-box/releases/latest)
+          DOWNLOAD_URL=$(echo "$RELEASE_JSON" | python3 -c "import sys, json; assets = json.load(sys.stdin)['assets']; print(next(a['browser_download_url'] for a in assets if a['name'].endswith('-linux-amd64.tar.gz')))")
+          echo "Downloading: $DOWNLOAD_URL"
+          curl -sSL "$DOWNLOAD_URL" -o /tmp/sing-box.tar.gz
+          tar -xzf /tmp/sing-box.tar.gz -C /tmp
+          sudo mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box
+          sudo chmod +x /usr/local/bin/sing-box
+          sing-box version
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth python3-tk python3-dev scrot
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          google-chrome --version
+
+      - name: Run Falix Multi-Account Keeper
+        env:
+          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # 防检测空置冷却与随机顺序配置
+          ACCOUNT_DELAY_MIN: "15"
+          ACCOUNT_DELAY_MAX: "40"
+          SHUFFLE_ACCOUNTS: "true"
+        run: |
+          touch ~/.Xauthority
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" python main.py
+
+      - name: Upload result screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: falix-screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 3
